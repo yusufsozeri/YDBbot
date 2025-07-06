@@ -4,6 +4,7 @@ import asyncio
 from discord.ext import commands
 import yt_dlp
 import os
+from dotenv import load_dotenv
 import re
 from urllib.parse import urlparse
 
@@ -1345,6 +1346,7 @@ async def on_command_error(ctx, error):
         print(f"Hata: {str(error)}")
         await ctx.send(f"Bir hata oluştu: {str(error)}")
 
+load_dotenv()
 
 # Botu çalıştır
-bot.run('MTM4NDI5MTcyODkwMjg1MjcxMQ.GZTlYV.d1NjXj4zGKy_Lj8eP1ZT8aSRe7B7q4f2yFtHns')
+bot.run(os.getenv('DISCORD_TOKEN'))
