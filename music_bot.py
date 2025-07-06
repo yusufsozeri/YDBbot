@@ -1347,4 +1347,4 @@ async def on_command_error(ctx, error):
 
 
 # Botu çalıştır
-bot.run('MTM4NDI5MTcyODkwMjg1MjcxMQ.GqJ_HJ.4MrPsL26gDxpmdObIHJj1mQhV6jkmLBFjC5Q00')
+bot.run('MTM4NDI5MTcyODkwMjg1MjcxMQ.GZTlYV.d1NjXj4zGKy_Lj8eP1ZT8aSRe7B7q4f2yFtHns')
