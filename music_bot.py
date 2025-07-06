@@ -32,7 +32,12 @@ ydl_opts = {
     'fragment_retries': 3,
     'skip_unavailable_fragments': True,
     'cachedir': False,
-    'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
+    'extractor_args': {
+        'youtube': {
+            'skip': ['dash', 'hls'],
+            'player_client': ['android', 'web'],  # Farklı istemci türleri deneyin
+        }
+    },
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -852,6 +857,12 @@ class MusicPlayer:
                     'socket_timeout': 5,
                     'skip_download': True,
                     'cachedir': False,
+                    'geo_bypass': True,
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web'],  # Farklı istemci türleri deneyin
+                        }
+                    },
                 }
                 
                 with yt_dlp.YoutubeDL(ydl_opts_url) as ydl:
@@ -861,7 +872,22 @@ class MusicPlayer:
                     return song_info
             except Exception as e:
                 print(f"URL yeniden alma hatası: {e}")
-                raise e
+                # Alternatif kaynak dene
+                try:
+                    # Farklı bir format dene
+                    ydl_opts_alt = {
+                        'format': 'worstaudio/worst',  # Daha düşük kalite dene
+                        'noplaylist': True,
+                        'quiet': True,
+                        'geo_bypass': True,
+                        'skip_download': True,
+                    }
+                    with yt_dlp.YoutubeDL(ydl_opts_alt) as ydl:
+                        info = ydl.extract_info(song_info['webpage_url'], download=False)
+                        song_info['url'] = info.get('url', '')
+                        return song_info
+                except:
+                    raise e
         return song_info
 
     # Playlist şarkılarını arka planda işle
