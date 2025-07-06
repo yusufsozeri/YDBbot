@@ -27,15 +27,18 @@ ydl_opts = {
     'source_address': '0.0.0.0',
     'extract_flat': 'in_playlist',
     'geo_bypass': True,
-    'socket_timeout': 5,
-    'retries': 3,
-    'fragment_retries': 3,
+    'socket_timeout': 10,
+    'retries': 5,
+    'fragment_retries': 5,
     'skip_unavailable_fragments': True,
     'cachedir': False,
     'extractor_args': {
         'youtube': {
-            'skip': ['dash', 'hls'],
-            'player_client': ['android', 'web'],  # Farklı istemci türleri deneyin
+            'player_client': ['mweb', 'android', 'web'],  # mweb client öncelikli
+            'player_skip': 'configs',  # Bazı yapılandırmaları atla
+        },
+        'youtubetab': {
+            'skip': 'webpage',  # Webpage isteklerini atla
         }
     },
     'postprocessors': [{
@@ -89,6 +92,8 @@ class MusicPlayer:
         self.text_channels = {}  # Sunucu başına son kullanılan metin kanalı
         self.control_messages = {}  # Kontrol mesajları
         self.search_results = {}  # Arama sonuçları
+        self.leave_tasks = {}  # Otomatik ayrılma görevleri
+        self.inactivity_timeout = 300  # 5 dakika (saniye cinsinden)
         
     # Mesaj gönderme yardımcı metodu
     async def send_message(self, ctx, content=None, embed=None, view=None):
@@ -484,10 +489,18 @@ class MusicPlayer:
             song_info = await self.get_song_url(song_info)
         except Exception as e:
             print(f"URL alma hatası: {e}")
+            error_msg = str(e)
+            if "Sign in to confirm you're not a bot" in error_msg:
+                error_msg = "YouTube bot koruması nedeniyle bu şarkı çalınamıyor. Lütfen başka bir şarkı deneyin veya birkaç dakika sonra tekrar deneyin."
+            elif "This content isn't available" in error_msg:
+                error_msg = "YouTube istek limiti aşıldı. Lütfen birkaç dakika bekleyip tekrar deneyin."
+            elif "PO Token" in error_msg:
+                error_msg = "YouTube PO Token gerekiyor. Bot yöneticisiyle iletişime geçin."
+            
             if isinstance(ctx, discord.Interaction):
-                await ctx.followup.send(f"Şarkı URL'si alınamadı: {e}")
+                await ctx.followup.send(f"Şarkı yüklenirken bir hata oluştu: {error_msg}")
             else:
-                await ctx.send(f"Şarkı URL'si alınamadı: {e}")
+                await ctx.send(f"Şarkı yüklenirken bir hata oluştu: {error_msg}")
             return
         
         # Ses kaynağını oluştur
@@ -547,6 +560,11 @@ class MusicPlayer:
         
         # Sırada şarkı var mı kontrol et
         if guild_id in self.queue and self.queue[guild_id]:
+            # Eğer varsa, önceki ayrılma görevini iptal et
+            if guild_id in self.leave_tasks and not self.leave_tasks[guild_id].done():
+                self.leave_tasks[guild_id].cancel()
+                print(f"Ayrılma görevi iptal edildi: {guild_id}")
+            
             next_song = self.queue[guild_id].pop(0)
             print(f"Sıradaki şarkı: {next_song['title']}")
             
@@ -631,7 +649,7 @@ class MusicPlayer:
             # Şu an çalan şarkı bilgisini temizle
             self.now_playing.pop(guild_id, None)
             
-            # Kontrol mesajını temizle
+            # Kontrol mesajını güncelle
             if guild_id in self.control_messages:
                 try:
                     control_message = self.control_messages[guild_id]
@@ -640,10 +658,34 @@ class MusicPlayer:
                 except Exception as e:
                     print(f"Kontrol mesajı temizleme hatası: {e}")
             
-            # Ses kanalından ayrılma
-            if voice_client:
-                await voice_client.disconnect()
-                print(f"Ses kanalından ayrıldı: {guild_id}")
+            # Otomatik ayrılma görevi oluştur
+            async def leave_after_timeout():
+                try:
+                    await asyncio.sleep(self.inactivity_timeout)  # 5 dakika bekle
+                    
+                    # Hala bağlı mı kontrol et
+                    if guild.voice_client and guild.voice_client.is_connected():
+                        # Metin kanalına bilgi mesajı gönder
+                        if guild_id in self.text_channels:
+                            channel = self.text_channels[guild_id]
+                            await channel.send("👋 5 dakika boyunca kullanılmadığı için ses kanalından ayrılıyorum.")
+                        
+                        # Ses kanalından ayrıl
+                        await guild.voice_client.disconnect()
+                        print(f"İnaktivite nedeniyle ses kanalından ayrıldı: {guild_id}")
+                except asyncio.CancelledError:
+                    # Görev iptal edildi
+                    pass
+                except Exception as e:
+                    print(f"Otomatik ayrılma hatası: {e}")
+            
+            # Önceki görevi iptal et (eğer varsa)
+            if guild_id in self.leave_tasks and not self.leave_tasks[guild_id].done():
+                self.leave_tasks[guild_id].cancel()
+            
+            # Yeni görevi oluştur ve başlat
+            self.leave_tasks[guild_id] = asyncio.create_task(leave_after_timeout())
+            print(f"Otomatik ayrılma görevi oluşturuldu: {guild_id}, {self.inactivity_timeout} saniye sonra")
 
     # Kontrol arayüzü oluştur
     async def create_control_panel(self, ctx, song_info, update=False):
@@ -854,13 +896,17 @@ class MusicPlayer:
                     'nocheckcertificate': True,
                     'quiet': True,
                     'no_warnings': True,
-                    'socket_timeout': 5,
+                    'socket_timeout': 10,
                     'skip_download': True,
                     'cachedir': False,
                     'geo_bypass': True,
                     'extractor_args': {
                         'youtube': {
-                            'player_client': ['android', 'web'],  # Farklı istemci türleri deneyin
+                            'player_client': ['mweb', 'android', 'web'],  # mweb client öncelikli
+                            'player_skip': 'configs',  # Bazı yapılandırmaları atla
+                        },
+                        'youtubetab': {
+                            'skip': 'webpage',  # Webpage isteklerini atla
                         }
                     },
                 }
@@ -881,13 +927,46 @@ class MusicPlayer:
                         'quiet': True,
                         'geo_bypass': True,
                         'skip_download': True,
+                        'sleep_interval': 5,  # İstekler arasında 5 saniye bekle
+                        'max_sleep_interval': 10,  # Maksimum 10 saniye bekle
+                        'extractor_args': {
+                            'youtube': {
+                                'player_client': ['tv_embedded', 'mweb', 'android'],  # Farklı istemciler dene
+                            }
+                        }
                     }
                     with yt_dlp.YoutubeDL(ydl_opts_alt) as ydl:
                         info = ydl.extract_info(song_info['webpage_url'], download=False)
                         song_info['url'] = info.get('url', '')
                         return song_info
-                except:
-                    raise e
+                except Exception as e2:
+                    print(f"Alternatif kaynak denemesi başarısız: {e2}")
+                    # Son çare olarak doğrudan URL oluşturmayı dene
+                    try:
+                        # YouTube video ID'sini al
+                        video_id = None
+                        if 'youtube.com' in song_info['webpage_url'] or 'youtu.be' in song_info['webpage_url']:
+                            import re
+                            patterns = [
+                                r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+                                r'(?:embed\/|v\/|youtu.be\/)([0-9A-Za-z_-]{11})'
+                            ]
+                            for pattern in patterns:
+                                match = re.search(pattern, song_info['webpage_url'])
+                                if match:
+                                    video_id = match.group(1)
+                                    break
+                        
+                        if video_id:
+                            # Alternatif bir müzik servisi kullan
+                            print(f"YouTube kısıtlaması nedeniyle alternatif servis deneniyor: {video_id}")
+                            # Burada alternatif bir müzik servisi API'si kullanabilirsiniz
+                            # Örnek olarak, YouTube Music API veya başka bir servis
+                            
+                            # Şimdilik basit bir hata mesajı döndürelim
+                            raise Exception("YouTube kısıtlaması nedeniyle bu video şu anda oynatılamıyor. Lütfen başka bir şarkı deneyin.")
+                    except:
+                        raise e
         return song_info
 
     # Playlist şarkılarını arka planda işle
@@ -1325,6 +1404,10 @@ async def slash_leave(interaction: discord.Interaction):
         # Çalmayı durdur
         if interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused():
             interaction.guild.voice_client.stop()
+        
+        # Otomatik ayrılma görevini iptal et
+        if guild_id in music_player.leave_tasks and not music_player.leave_tasks[guild_id].done():
+            music_player.leave_tasks[guild_id].cancel()
         
         # Kanaldan ayrıl
         await interaction.guild.voice_client.disconnect(force=True)
